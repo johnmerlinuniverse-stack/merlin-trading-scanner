@@ -1,0 +1,441 @@
+// Merlin Matrix V6.0 ML - TradingView Indicator
+// 🧙‍♂️ WITH SIMPLE MODE & STRATEGY SWITCHING
+// Based on Merlin Matrix V5.5 + ML Enhancements
+//@version=5
+indicator("🧙‍♂️ Merlin Matrix V6.0 ML", shorttitle="Merlin V6.0 ML", overlay=true, max_lines_count=500, max_labels_count=500, max_boxes_count=500)
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// 🎯 SIMPLE MODE & STRATEGY SETTINGS (NEW!)
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+simple_mode = input.bool(false, title="🎯 ENABLE SIMPLE MODE", group="═══ 🎯 DISPLAY MODE ═══", tooltip="Hides all indicators, shows only Buy/Sell signals with TP/SL")
+show_entry_line = input.bool(true, title="Show Entry Price", group="═══ 🎯 DISPLAY MODE ═══")
+show_tp_line = input.bool(true, title="Show Take Profit", group="═══ 🎯 DISPLAY MODE ═══")
+show_sl_line = input.bool(true, title="Show Stop Loss", group="═══ 🎯 DISPLAY MODE ═══")
+show_confluence = input.bool(true, title="Show Confluence Score", group="═══ 🎯 DISPLAY MODE ═══")
+
+// Strategy Selection
+strategy_mode = input.string("Intraday", "📊 Trading Strategy", options=["Scalping", "Intraday", "Swing"], group="═══ 📊 STRATEGY ═══")
+
+// Strategy-specific multipliers
+tp_multiplier = switch strategy_mode
+    "Scalping" => 1.2
+    "Intraday" => 2.0
+    "Swing" => 3.5
+    => 2.0
+
+sl_multiplier = switch strategy_mode
+    "Scalping" => 0.8
+    "Intraday" => 1.0
+    "Swing" => 1.5
+    => 1.0
+
+min_confluence = switch strategy_mode
+    "Scalping" => 3
+    "Intraday" => 4
+    "Swing" => 5
+    => 4
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// TOGGLE OPTIONS (EXISTING - Now conditional on Simple Mode)
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+enable_nr = input.bool(true, title="Enable NR4/NR7/NR10", group="Toggle Indicators")
+enable_supertrend = input.bool(true, title="Enable SuperTrend V", group="Toggle Indicators")
+enable_smoothed_ha = input.bool(true, title="Enable Smoothed Heiken Ashi", group="Toggle Indicators")
+enable_sar = input.bool(false, title="Enable Parabolic SAR", group="Toggle Indicators")
+enable_ema = input.bool(true, title="Enable EMA Lines", group="Toggle Indicators")
+enable_zone_shift = input.bool(false, title="Enable Zone Shift", group="Toggle Indicators")
+enable_sr_power = input.bool(false, title="Enable S&R Power", group="Toggle Indicators")
+enable_pa_toolkit = input.bool(false, title="Enable PA Toolkit", group="Toggle Indicators")
+enable_rsi_t3 = input.bool(false, title="Enable RSI-T3", group="Toggle Indicators")
+enable_breakout_boxes = input.bool(false, title="Enable Breakout Boxes", group="Toggle Indicators")
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// 🧮 CONFLUENCE CALCULATION SYSTEM (NEW!)
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+// Variables to track confluence
+var int confluence_score = 0
+var array<string> confluence_reasons = array.new_string()
+
+// Calculate RSI for confluence
+rsi_14 = ta.rsi(close, 14)
+
+// Calculate EMA alignment
+ema_9 = ta.ema(close, 9)
+ema_21 = ta.ema(close, 21)
+ema_50 = ta.ema(close, 50)
+ema_alignment_bull = ema_9 > ema_21 and ema_21 > ema_50
+ema_alignment_bear = ema_9 < ema_21 and ema_21 < ema_50
+ema_aligned = ema_alignment_bull or ema_alignment_bear
+
+// Volume analysis
+vol_avg = ta.sma(volume, 20)
+volume_spike = volume > vol_avg * 1.5
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// INDIKATOR 1: NR4/NR7/NR10 (EXISTING CODE - Keep as is)
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+tf = input.timeframe("D", title="Timeframe", group="═══ 📍 NR4/NR7/NR10 ═══")
+ptype = input.string("NR4/NR7/NR10", title="Pattern Type", options=["NR4/NR7/NR10","NR4","NR7","NR10","NR4/NR7","NR7/NR10"], group="═══ 📍 NR4/NR7/NR10 ═══")
+
+var signals = array.new_label()
+var down_check = false
+var up_check = false
+var up_fired = false
+var down_fired = false
+var box bx = na
+var line h_ln = na
+var line l_ln = na
+var line m_ln = na
+var float rh = na
+var float rl = na
+invis = color.rgb(0,0,0,100)
+
+rng = (high-low)
+lst_4 = ta.lowest(rng,4)
+lst_7 = ta.lowest(rng,7)
+lst_10 = ta.lowest(rng,10)
+
+nr10_pattern = (ptype == "NR4/NR7/NR10" or ptype == "NR10" or ptype == "NR7/NR10") and (rng == lst_10)
+nr7_pattern = (ptype == "NR4/NR7/NR10" or ptype == "NR7" or ptype == "NR4/NR7" or ptype == "NR7/NR10") and (rng == lst_7) and (not nr10_pattern)
+nr4_pattern = (ptype == "NR4/NR7/NR10" or ptype == "NR4" or ptype == "NR4/NR7") and (rng == lst_4) and (not nr7_pattern) and (not nr10_pattern)
+
+[nr4,nr7,nr10,ph,pl] = request.security("",tf,[nr4_pattern[1],nr7_pattern[1],nr10_pattern[1],high[1],low[1]], lookahead=barmerge.lookahead_on)
+NR = nr4 or nr7 or nr10
+
+// NR Logic (keep existing)
+if enable_nr and not simple_mode
+    if NR
+        rh := ph
+        rl := pl
+    mid = math.avg(rh,rl)
+    new_tf = timeframe.change(tf)
+    new_NR = new_tf and NR
+    if new_NR
+        bx.set_top(rh)
+        bx.set_bottom(rl)
+        bx.set_right(bar_index)
+        up_check := true
+        down_check := true
+        h_ln := line.new(bar_index,rh,bar_index+1,rh, color=color.gray)
+        l_ln := line.new(bar_index,rl,bar_index+1,rl, color=color.gray)
+        m_ln := line.new(bar_index,mid,bar_index+1,mid, style=line.style_dashed, color=color.gray)
+    if new_tf
+        up_fired := false
+        down_fired := false
+        bx := box.new(bar_index,high,bar_index,low, bgcolor=invis, border_width=0)
+    if (close > mid and down_check == false)
+        down_check := true
+    if ta.crossunder(close,rl) and down_check
+        down_check := false
+        down_fired := true
+    if (close < mid and up_check == false)
+        up_check := true
+    if ta.crossover(close,rh) and up_check
+        up_check := false
+        up_fired := true
+    if NR or up_fired or down_fired
+        h_ln.set_x2(bar_index)
+        l_ln.set_x2(bar_index)
+        m_ln.set_x2(bar_index)
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// INDIKATOR 2: SUPERTREND V (EXISTING - Simplified for confluence)
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+st_mult = input.int(1, title='SuperTrend Multiplier', group="═══ 📍 SuperTrend V ═══")
+st_period = input.int(10, title='SuperTrend Period', group="═══ 📍 SuperTrend V ═══")
+
+atr_st = ta.atr(st_period)
+up_trend_st = close - (st_mult * atr_st)
+down_trend_st = close + (st_mult * atr_st)
+
+var float st_line = na
+var int st_trend = 1
+
+st_line := st_trend == 1 ? math.max(up_trend_st, st_line[1]) : math.min(down_trend_st, st_line[1])
+
+if close > st_line
+    st_trend := 1
+if close < st_line
+    st_trend := -1
+
+st_buy = ta.crossover(close, st_line)
+st_sell = ta.crossunder(close, st_line)
+
+// Plot SuperTrend (only if not simple mode)
+plot(enable_supertrend and not simple_mode ? st_line : na, color=st_trend == 1 ? color.green : color.red, linewidth=2, title="SuperTrend")
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// 🎯 MASTER BUY/SELL SIGNAL CALCULATION
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+// Reset confluence
+confluence_score := 0
+array.clear(confluence_reasons)
+
+// Factor 1: NR Pattern
+if enable_nr and NR
+    confluence_score := confluence_score + (nr10 ? 2 : (nr7 ? 1 : 1))
+    array.push(confluence_reasons, nr10 ? "🟣 NR10" : (nr7 ? "🟡 NR7" : "🟢 NR4"))
+
+// Factor 2: SuperTrend Alignment
+if enable_supertrend and st_buy
+    confluence_score := confluence_score + 1
+    array.push(confluence_reasons, "✅ ST Buy")
+else if enable_supertrend and st_sell
+    confluence_score := confluence_score + 1
+    array.push(confluence_reasons, "🔴 ST Sell")
+
+// Factor 3: RSI Neutral (40-60 for entries)
+if rsi_14 >= 40 and rsi_14 <= 60
+    confluence_score := confluence_score + 1
+    array.push(confluence_reasons, "📊 RSI Neutral")
+
+// Factor 4: EMA Alignment
+if enable_ema and ema_aligned
+    confluence_score := confluence_score + 1
+    array.push(confluence_reasons, ema_alignment_bull ? "📈 EMA Bull" : "📉 EMA Bear")
+
+// Factor 5: Volume Spike
+if volume_spike
+    confluence_score := confluence_score + 1
+    array.push(confluence_reasons, "📈 Volume")
+
+// Master Signals (only fire when confluence >= minimum)
+master_buy_signal = confluence_score >= min_confluence and close > high[1] and (not enable_supertrend or st_trend == 1)
+master_sell_signal = confluence_score >= min_confluence and close < low[1] and (not enable_supertrend or st_trend == -1)
+
+// Entry tracking
+var float entry_price = na
+var int entry_bar = na
+var bool in_position = false
+var bool is_long = false
+
+if master_buy_signal and not in_position
+    entry_price := close
+    entry_bar := bar_index
+    in_position := true
+    is_long := true
+
+if master_sell_signal and not in_position
+    entry_price := close
+    entry_bar := bar_index
+    in_position := true
+    is_long := false
+
+// Calculate TP/SL
+atr_14 = ta.atr(14)
+tp_long = entry_price + (atr_14 * tp_multiplier)
+sl_long = entry_price - (atr_14 * sl_multiplier)
+tp_short = entry_price - (atr_14 * tp_multiplier)
+sl_short = entry_price + (atr_14 * sl_multiplier)
+
+// Exit conditions
+if in_position and is_long
+    if close >= tp_long or close <= sl_long
+        in_position := false
+        entry_price := na
+
+if in_position and not is_long
+    if close <= tp_short or close >= sl_short
+        in_position := false
+        entry_price := na
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// 🎯 SIMPLE MODE VISUALIZATION
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+if simple_mode
+    
+    // Buy Signal
+    plotshape(
+        master_buy_signal,
+        title="🎯 BUY SIGNAL",
+        text="BUY",
+        style=shape.labelup,
+        location=location.belowbar,
+        color=color.new(#00ff00, 0),
+        textcolor=color.white,
+        size=size.large
+    )
+    
+    // Sell Signal
+    plotshape(
+        master_sell_signal,
+        title="🎯 SELL SIGNAL",
+        text="SELL",
+        style=shape.labeldown,
+        location=location.abovebar,
+        color=color.new(#ff0000, 0),
+        textcolor=color.white,
+        size=size.large
+    )
+    
+    // Entry Price Line
+    var line entry_line = na
+    if show_entry_line and not na(entry_price) and in_position
+        line.delete(entry_line)
+        entry_line := line.new(
+            x1=entry_bar, y1=entry_price,
+            x2=bar_index + 10, y2=entry_price,
+            color=color.yellow,
+            width=2,
+            style=line.style_solid
+        )
+        
+        label.new(
+            x=bar_index + 10,
+            y=entry_price,
+            text="Entry: " + str.tostring(entry_price, "#.####"),
+            style=label.style_label_left,
+            color=color.yellow,
+            textcolor=color.black,
+            size=size.small
+        )
+    
+    // TP Line
+    var line tp_line = na
+    if show_tp_line and not na(entry_price) and in_position
+        line.delete(tp_line)
+        tp_price = is_long ? tp_long : tp_short
+        tp_line := line.new(
+            x1=entry_bar, y1=tp_price,
+            x2=bar_index + 10, y2=tp_price,
+            color=color.green,
+            width=2,
+            style=line.style_dashed
+        )
+        
+        label.new(
+            x=bar_index + 10,
+            y=tp_price,
+            text="TP: " + str.tostring(tp_price, "#.####") + " (R:" + str.tostring(tp_multiplier, "#.#") + ")",
+            style=label.style_label_left,
+            color=color.green,
+            textcolor=color.white,
+            size=size.small
+        )
+    
+    // SL Line
+    var line sl_line = na
+    if show_sl_line and not na(entry_price) and in_position
+        line.delete(sl_line)
+        sl_price = is_long ? sl_long : sl_short
+        sl_line := line.new(
+            x1=entry_bar, y1=sl_price,
+            x2=bar_index + 10, y2=sl_price,
+            color=color.red,
+            width=2,
+            style=line.style_dotted
+        )
+        
+        label.new(
+            x=bar_index + 10,
+            y=sl_price,
+            text="SL: " + str.tostring(sl_price, "#.####"),
+            style=label.style_label_left,
+            color=color.red,
+            textcolor=color.white,
+            size=size.small
+        )
+    
+    // Confluence Score Label
+    if show_confluence and (master_buy_signal or master_sell_signal)
+        confluence_text = "Confluence: " + str.tostring(confluence_score) + "/" + str.tostring(min_confluence) + "\n"
+        for i = 0 to math.min(array.size(confluence_reasons) - 1, 4)
+            confluence_text := confluence_text + array.get(confluence_reasons, i) + "\n"
+        
+        label.new(
+            x=bar_index,
+            y=is_long ? low : high,
+            text=confluence_text,
+            style=is_long ? label.style_label_up : label.style_label_down,
+            color=color.new(#2196F3, 20),
+            textcolor=color.white,
+            size=size.normal
+        )
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// EXISTING INDICATORS (Only show when NOT in Simple Mode)
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+// EMA Lines
+ema1 = ta.ema(close, 5)
+ema2 = ta.ema(close, 13)
+ema3 = ta.ema(close, 20)
+ema4 = ta.ema(close, 50)
+ema5 = ta.ema(close, 200)
+
+plot(enable_ema and not simple_mode ? ema1 : na, color=color.green, linewidth=1, title="EMA 5")
+plot(enable_ema and not simple_mode ? ema2 : na, color=color.aqua, linewidth=1, title="EMA 13")
+plot(enable_ema and not simple_mode ? ema3 : na, color=color.blue, linewidth=1, title="EMA 20")
+plot(enable_ema and not simple_mode ? ema4 : na, color=color.orange, linewidth=1, title="EMA 50")
+plot(enable_ema and not simple_mode ? ema5 : na, color=color.purple, linewidth=2, title="EMA 200")
+
+// Smoothed Heiken Ashi (keep existing code but add simple_mode check)
+if enable_smoothed_ha and not simple_mode
+    len1 = 8
+    len2 = 8
+    o = ta.ema(open, len1)
+    c = ta.ema(close, len1)
+    h = ta.ema(high, len1)
+    l = ta.ema(low, len1)
+    haclose = (o + h + l + c) / 4
+    var float haopen = na
+    haopen := na(haopen[1]) ? (o + c) / 2 : (haopen[1] + haclose[1]) / 2
+    hahigh = math.max(h, math.max(haopen, haclose))
+    halow = math.min(l, math.min(haopen, haclose))
+    o2 = ta.ema(haopen, len2)
+    c2 = ta.ema(haclose, len2)
+    h2 = ta.ema(hahigh, len2)
+    l2 = ta.ema(halow, len2)
+    col = o2 > c2 ? color.red : color.lime
+    plotcandle(o2, h2, l2, c2, title="Smoothed HA", color=col, wickcolor=color.new(color.gray,90), bordercolor=color.new(color.gray, 90))
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// 📊 INFO PANEL
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+if barstate.islast
+    var table info_table = table.new(position.top_right, 2, 6, border_width=1)
+    
+    // Header
+    table.cell(info_table, 0, 0, "🧙‍♂️ Merlin V6.0 ML", text_color=color.white, bgcolor=color.new(#2196F3, 20), text_size=size.normal)
+    table.cell(info_table, 1, 0, strategy_mode, text_color=color.yellow, bgcolor=color.new(#2196F3, 20), text_size=size.normal)
+    
+    // Mode
+    table.cell(info_table, 0, 1, "Mode:", text_color=color.white, text_size=size.small)
+    table.cell(info_table, 1, 1, simple_mode ? "🎯 Simple" : "📊 Full", text_color=simple_mode ? color.yellow : color.aqua, text_size=size.small)
+    
+    // Confluence
+    table.cell(info_table, 0, 2, "Confluence:", text_color=color.white, text_size=size.small)
+    table.cell(info_table, 1, 2, str.tostring(confluence_score) + "/" + str.tostring(min_confluence), 
+        text_color=confluence_score >= min_confluence ? color.green : color.orange, text_size=size.small)
+    
+    // RSI
+    table.cell(info_table, 0, 3, "RSI (14):", text_color=color.white, text_size=size.small)
+    rsi_color = rsi_14 > 70 ? color.red : (rsi_14 < 30 ? color.green : color.white)
+    table.cell(info_table, 1, 3, str.tostring(rsi_14, "#.#"), text_color=rsi_color, text_size=size.small)
+    
+    // Position
+    table.cell(info_table, 0, 4, "Position:", text_color=color.white, text_size=size.small)
+    pos_text = in_position ? (is_long ? "🟢 LONG" : "🔴 SHORT") : "— None"
+    table.cell(info_table, 1, 4, pos_text, text_color=in_position ? (is_long ? color.green : color.red) : color.gray, text_size=size.small)
+    
+    // R:R
+    if in_position
+        table.cell(info_table, 0, 5, "Risk:Reward:", text_color=color.white, text_size=size.small)
+        table.cell(info_table, 1, 5, "1:" + str.tostring(tp_multiplier/sl_multiplier, "#.#"), text_color=color.yellow, text_size=size.small)
+
+// ═══════════════════════════════════════════════════════════════════════════════════════
+// 🚨 ALERTS
+// ═══════════════════════════════════════════════════════════════════════════════════════
+
+alertcondition(master_buy_signal, title="🟢 Master BUY Signal", message="Merlin Matrix: BUY Signal - Confluence: {{plot_0}}")
+alertcondition(master_sell_signal, title="🔴 Master SELL Signal", message="Merlin Matrix: SELL Signal - Confluence: {{plot_0}}")
+alertcondition(in_position and is_long and close >= tp_long, title="🎯 TP Hit (Long)", message="Merlin Matrix: Take Profit HIT (Long)")
+alertcondition(in_position and not is_long and close <= tp_short, title="🎯 TP Hit (Short)", message="Merlin Matrix: Take Profit HIT (Short)")
